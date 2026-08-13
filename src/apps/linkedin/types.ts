@@ -1,5 +1,21 @@
 export type LeadStatus = 'new' | 'requested' | 'connected' | 'replied' | 'meeting';
 
+/**
+ * Scraped LinkedIn signals for a lead, written by the sourcing pipeline.
+ * Kept separate from `outreach` — that column is the generated copy, and a
+ * profile snapshot written there reads as an empty flow. Every field is
+ * optional because LinkedIn does not always expose them.
+ */
+export interface LeadProfile {
+  city_location?: string;
+  connections?: number;
+  followers?: number;
+  recently_active?: boolean;
+  is_decision_maker?: boolean;
+  qualification_passed?: boolean;
+  source?: string;
+}
+
 export interface OutreachFlow {
   connection_note: string;
   blank_strategy: string;
@@ -25,6 +41,7 @@ export interface Lead {
   company_website?: string | null;
   potential_services?: string | null;
   outreach?: OutreachFlow | null;
+  profile?: LeadProfile | null;
   sent_steps?: string[] | null;
   status: LeadStatus;
   /** When they accepted the connection request. Anchors the sequence due dates. */

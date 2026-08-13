@@ -13,6 +13,15 @@ const corsHeaders = {
 
 type Provider = 'gemini' | 'openai' | 'anthropic';
 
+interface LeadProfileInput {
+  city_location?: string;
+  connections?: number;
+  followers?: number;
+  recently_active?: boolean;
+  is_decision_maker?: boolean;
+  source?: string;
+}
+
 interface LeadInput {
   name?: string;
   job_title?: string;
@@ -21,6 +30,7 @@ interface LeadInput {
   linkedin_url?: string;
   company_website?: string;
   potential_services?: string;
+  profile?: LeadProfileInput;
 }
 
 interface RequestInput {
@@ -42,6 +52,44 @@ const SYSTEM_PROMPT =
   'specific, non-salesy messages that get replies, and you design smart multi-step flows with ' +
   'branches for how prospects respond. You always reply with a single valid JSON object and nothing else.';
 
+/**
+ * The LinkedIn profile signals, rendered for the prompt along with how to use
+ * them. A heavily-followed active profile is buried in outreach and needs a
+ * shorter, sharper message than a quiet one — same offer, different calibration.
+ */
+const buildProfileBlock = (p?: LeadProfileInput): string => {
+  if (!p) return '';
+  const lines: string[] = [];
+  if (p.city_location) lines.push(`- Location: ${p.city_location}`);
+  if (typeof p.connections === 'number') lines.push(`- Connections: ${p.connections}`);
+  if (typeof p.followers === 'number') lines.push(`- Followers: ${p.followers}`);
+  if (typeof p.recently_active === 'boolean') {
+    lines.push(`- Posted or engaged in the last ~90 days: ${p.recently_active ? 'yes' : 'no'}`);
+  }
+  if (typeof p.is_decision_maker === 'boolean') {
+    lines.push(`- Confirmed decision-maker: ${p.is_decision_maker ? 'yes' : 'no'}`);
+  }
+  if (!lines.length) return '';
+
+  return `
+Their LinkedIn presence:
+${lines.join('\n')}
+
+Calibrate to this presence:
+- High reach (roughly 1000+ followers/connections) and recently active: they get
+  a lot of outreach and their attention is expensive. Go shorter and sharper,
+  lead with the single most specific thing, and you may reference that they are
+  visibly active in their space. Never flatter them for being big.
+- Modest reach or not recently active: their inbox is quiet, so a slightly
+  warmer and more explanatory message lands fine. Do NOT reference their posting
+  or activity — there may be none, and pretending otherwise is instantly obvious.
+- Not a confirmed decision-maker: write so it still works if they have to
+  forward it to whoever decides.
+- Local specifics (their city, the local market) are fair game when they sharpen
+  a line. Never use location as filler small talk.
+`;
+};
+
 const buildPrompt = (lead: LeadInput, context: string): string =>
   `Design a complete LinkedIn outreach FLOW for this lead.
 ${context ? `\nBackground about me / my agency (use for credibility, proof and specifics):\n${context}\n` : ''}
@@ -52,20 +100,38 @@ Lead details:
 - Industry: ${lead.industry ?? ''}
 - Company website: ${lead.company_website ?? ''}
 - Services I could offer them: ${lead.potential_services ?? ''}
-
+${buildProfileBlock(lead.profile)}
 Return ONLY a JSON object with exactly these keys:
 {
-  "connection_note": "Connection-request note, MAX 280 chars. Personal, specific to them, NO pitch.",
+  "connection_note": "Connection-request note, MAX 280 chars. Personal, specific to them, NO pitch. Never ask permission to send or share anything.",
   "blank_strategy": "One sentence of advice: blank (no-note) requests often accept higher — say whether to send blank for this person and how to open if so.",
-  "opener": "First DM once they accept. Warm, references them, no pitch. 2-3 sentences.",
-  "value": "Follow-up DM with a concrete, relevant proof point or result (use my wins/testimonials if provided). 2-4 sentences.",
-  "cta": "Follow-up DM proposing a specific next step (a quick call). 1-3 sentences.",
-  "bump": "A light, friendly nudge to send if they haven't replied. 1-2 sentences.",
-  "reply_positive": "What to send if they reply POSITIVELY / show interest — move toward booking a call. 2-3 sentences.",
-  "reply_objection": "What to send if they push back, hesitate, or say no — reframe gracefully, zero pressure, keep the door open. 2-3 sentences."
+  "opener": "First DM once they accept. References them, no pitch. Lead with the thing itself, not a greeting-then-pitch. 2-3 sentences.",
+  "value": "Follow-up DM carrying EXACTLY ONE proof point — one number or one client example, never a stack of them. One metric with context reads as fact; three read as marketing. 2-4 sentences.",
+  "cta": "Follow-up DM proposing an AUDIT CALL — a call where they leave with a read on their current situation whether or not they buy. Use the words 'audit call'. Never 'quick call', 'sales call', 'demo' or 'hop on a call'. 1-3 sentences.",
+  "bump": "ONE short question and nothing else, e.g. 'Did you get a chance to look at this?'. No 'just bumping this', no restating the value, no apology for following up, no new pitch. Max 1 sentence.",
+  "reply_positive": "What to send if they reply POSITIVELY. They already decided — do not re-qualify them in the thread. Acknowledge in one line, then offer the call/calendar. Qualify on the call, not here. Max 2 sentences.",
+  "reply_objection": "What to send if they push back, hesitate, or say no. Acknowledge without folding, reframe with ONE number or ONE example, never discount, zero pressure. If the objection reveals a genuine non-fit, say so directly and close the loop kindly. 2-3 sentences."
 }
 
-Be specific to THIS lead and sound human. Avoid generic openers like "I came across your profile".`;
+HARD RULES for every message above:
+- NO exclamation marks anywhere. They read as need, and neediness is the fastest
+  way to kill a reply. Use full stops.
+- Write at a calm, unhurried energy — like someone whose pipeline does not depend
+  on this conversation. Never eager, never grateful for their attention.
+- Do not ask permission to send something ("mind if I share…", "can I send you…").
+  If you have something worth sending, just send it.
+- Do not pitch before they have shown interest. Restraint is the differentiator —
+  most of their inbox is automated pitching from message one.
+- No emojis.
+- Ban these AI tells: em dashes, "unlock", "elevate", "delve", "dive into",
+  "game-changer", "landscape", "testament", "showcase", "leverage" as a verb,
+  "I hope this finds you well", and "I came across your profile".
+- Avoid perfectly parallel three-item lists, rhetorical questions used as
+  transitions, and tidy moral-of-the-story endings. Slightly rough and specific
+  beats smooth and generic.
+- Attach a number to any claim about a problem or a result. No vague benefits.
+
+Be specific to THIS lead and sound like a real person typed it between meetings.`;
 
 async function callOpenAICompatible(
   baseUrl: string,

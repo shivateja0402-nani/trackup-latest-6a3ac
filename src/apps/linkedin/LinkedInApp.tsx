@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import {
   ArrowLeft, Linkedin, Plus, Sparkles, Copy, Check, Trash2, Loader2, ExternalLink, X,
   ThumbsUp, ThumbsDown, Lightbulb, Clock, MessageSquare,
+  MapPin, Users, UserPlus, Activity, BadgeCheck,
 } from 'lucide-react';
 import { useLeads } from './useLeads';
-import { Lead, LeadStatus, OutreachFlow } from './types';
+import { Lead, LeadProfile, LeadStatus, OutreachFlow } from './types';
 import { supabase } from '../../lib/supabase';
 import { loadAIConfig } from '../../lib/aiConfig';
 import { loadUserContext, contextToPrompt } from '../../lib/userContext';
@@ -71,11 +72,67 @@ const DUE_BADGE_CLASS: Record<DueTone, string> = {
   upcoming: 'bg-gray-100 text-gray-600 dark:bg-gray-700/50 dark:text-gray-300',
 };
 
+// --- Profile snapshot --------------------------------------------------------
+
+const compactNumber = (n: number): string =>
+  n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1).replace(/\.0$/, '')}k` : String(n);
+
+/**
+ * The scraped LinkedIn signals, as chips. Only renders what LinkedIn actually
+ * exposed — a missing follower count shows nothing rather than a zero.
+ */
+const ProfileChips: React.FC<{ profile: LeadProfile }> = ({ profile }) => {
+  const chips: { key: string; label: string; icon: React.ReactNode; strong?: boolean }[] = [];
+
+  if (profile.city_location) {
+    chips.push({ key: 'loc', label: profile.city_location, icon: <MapPin className="w-3 h-3" /> });
+  }
+  if (typeof profile.connections === 'number') {
+    chips.push({ key: 'conn', label: `${compactNumber(profile.connections)} connections`, icon: <Users className="w-3 h-3" /> });
+  }
+  if (typeof profile.followers === 'number') {
+    chips.push({ key: 'foll', label: `${compactNumber(profile.followers)} followers`, icon: <UserPlus className="w-3 h-3" /> });
+  }
+  if (profile.recently_active) {
+    chips.push({ key: 'active', label: 'Recently active', icon: <Activity className="w-3 h-3" />, strong: true });
+  }
+  if (profile.is_decision_maker) {
+    chips.push({ key: 'dm', label: 'Decision-maker', icon: <BadgeCheck className="w-3 h-3" />, strong: true });
+  }
+
+  if (!chips.length) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+      {chips.map((c) => (
+        <span
+          key={c.key}
+          className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${
+            c.strong
+              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+              : 'bg-gray-100 text-gray-600 dark:bg-gray-700/50 dark:text-gray-300'
+          }`}
+        >
+          {c.icon}
+          {c.label}
+        </span>
+      ))}
+    </div>
+  );
+};
+
 export const LinkedInApp: React.FC<{ onExit: () => void }> = ({ onExit }) => {
   const { leads, loading, addLead, updateLead, deleteLead } = useLeads();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [filter, setFilter] = useState<LeadStatus | null>(null);
   const selected = leads.find((l) => l.id === selectedId) ?? null;
+
+  const counts = STATUS_ORDER.reduce(
+    (acc, s) => ({ ...acc, [s]: leads.filter((l) => l.status === s).length }),
+    {} as Record<LeadStatus, number>,
+  );
+  const visibleLeads = filter ? leads.filter((l) => l.status === filter) : leads;
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-linkedin-50/50 to-white dark:from-gray-900 dark:to-gray-950">
@@ -100,16 +157,55 @@ export const LinkedInApp: React.FC<{ onExit: () => void }> = ({ onExit }) => {
 
       <div className="flex-1 max-w-6xl w-full mx-auto px-6 py-6 grid lg:grid-cols-[320px_1fr] gap-6 overflow-hidden">
         <div className="overflow-y-auto pr-1">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Leads ({leads.length})</h2>
+          <div className="flex items-baseline justify-between mb-2">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Leads ({leads.length})</h2>
+            {filter && (
+              <button onClick={() => setFilter(null)} className="text-[11px] font-semibold text-linkedin-600 hover:text-linkedin-700">
+                Clear filter
+              </button>
+            )}
+          </div>
+
+          {/* Pipeline at a glance. Click a stage to filter, click again to clear. */}
+          {leads.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {STATUS_ORDER.map((s) => {
+                const active = filter === s;
+                return (
+                  <button
+                    key={s}
+                    onClick={() => setFilter(active ? null : s)}
+                    aria-pressed={active}
+                    title={`${counts[s]} ${STATUS_LABELS[s].toLowerCase()}`}
+                    className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-1 rounded-lg border transition-colors ${
+                      active
+                        ? 'bg-linkedin-600 border-linkedin-600 text-white'
+                        : counts[s] === 0
+                          ? 'bg-transparent border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-600'
+                          : 'bg-white dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:border-linkedin-300'
+                    }`}
+                  >
+                    {STATUS_LABELS[s]}
+                    <span className={active ? 'text-white' : 'text-gray-900 dark:text-white font-bold'}>{counts[s]}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {loading ? (
             <div className="text-sm text-gray-400 p-4">Loading…</div>
           ) : leads.length === 0 ? (
             <div className="text-sm text-gray-500 dark:text-gray-400 card-modern p-6 text-center">
               No leads yet. Click <span className="font-semibold">Add lead</span>.
             </div>
+          ) : visibleLeads.length === 0 ? (
+            <div className="text-sm text-gray-500 dark:text-gray-400 card-modern p-6 text-center">
+              No leads in <span className="font-semibold">{STATUS_LABELS[filter as LeadStatus]}</span>.
+            </div>
           ) : (
             <div className="space-y-2">
-              {leads.map((lead) => (
+              {visibleLeads.map((lead) => (
                 <button
                   key={lead.id}
                   onClick={() => setSelectedId(lead.id)}
@@ -238,6 +334,7 @@ const LeadDetail: React.FC<{
             name: lead.name, job_title: lead.job_title, company_name: lead.company_name,
             industry: lead.industry, linkedin_url: lead.linkedin_url,
             company_website: lead.company_website, potential_services: lead.potential_services,
+            profile: lead.profile ?? undefined,
           },
           context: contextToPrompt(loadUserContext()),
           provider: cfg.provider, model: cfg.model, apiKey: cfg.apiKey,
@@ -330,6 +427,7 @@ const LeadDetail: React.FC<{
             <a href={lead.linkedin_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center text-xs font-medium text-linkedin-600 hover:text-linkedin-700 mt-2">
               <ExternalLink className="w-3.5 h-3.5 mr-1" /> LinkedIn profile
             </a>
+            {lead.profile && <ProfileChips profile={lead.profile} />}
           </div>
           <button onClick={() => onDelete(lead.id)} className="p-2 text-gray-400 hover:text-red-500" aria-label="Delete lead">
             <Trash2 className="w-4 h-4" />
